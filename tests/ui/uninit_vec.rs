@@ -205,3 +205,47 @@ fn main() {
         }
     }
 }
+
+mod issue_11715 {
+    use std::mem::MaybeUninit;
+
+    fn large_maybeuninit_vec_ice() {
+        let mut v: Vec<[MaybeUninit<u64>; 4294967296]> = Vec::with_capacity(1);
+        unsafe { v.set_len(1) };
+    }
+
+    fn large_u8_vec_ice() {
+        let mut v: Vec<[u8; 4294967296]> = Vec::with_capacity(1);
+        //~^ uninit_vec
+        unsafe { v.set_len(1) };
+    }
+
+    fn large_nested_maybeuninit_vec_ice() {
+        let mut v: Vec<[[MaybeUninit<u64>; 4294967296]; 2]> = Vec::with_capacity(1);
+        unsafe { v.set_len(1) };
+    }
+
+    struct HeavyWrapperSafe([MaybeUninit<u64>; 4294967296]);
+    fn large_struct_maybeuninit_vec_ice() {
+        let mut v: Vec<HeavyWrapperSafe> = Vec::with_capacity(1);
+        unsafe { v.set_len(1) };
+    }
+
+    struct HeavyWrapperUnsafe([u8; 4294967296]);
+    fn large_struct_u8_vec_ice() {
+        let mut v: Vec<HeavyWrapperUnsafe> = Vec::with_capacity(1);
+        //~^ uninit_vec
+        unsafe { v.set_len(1) };
+    }
+
+    #[allow(clippy::large_enum_variant)]
+    enum HeavyEnum {
+        A([MaybeUninit<u64>; 4294967296]),
+        B,
+    }
+    fn large_enum_vec_ice() {
+        let mut v: Vec<HeavyEnum> = Vec::with_capacity(1);
+        //~^ uninit_vec
+        unsafe { v.set_len(1) };
+    }
+}

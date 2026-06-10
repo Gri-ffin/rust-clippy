@@ -505,17 +505,15 @@ pub fn same_type_modulo_regions<'tcx>(a: Ty<'tcx>, b: Ty<'tcx>) -> bool {
 
 /// Checks if a given type looks safe to be uninitialized.
 pub fn is_uninit_value_valid_for_ty<'tcx>(cx: &LateContext<'tcx>, ty: Ty<'tcx>) -> bool {
-    let typing_env = cx.typing_env().with_post_analysis_normalized(cx.tcx);
-    cx.tcx
-        .check_validity_requirement((ValidityRequirement::Uninit, typing_env.as_query_input(ty)))
-        .unwrap_or_else(|_| is_uninit_value_valid_for_ty_fallback(cx, ty))
-}
-
-/// A fallback for polymorphic types, which are not supported by `check_validity_requirement`.
-fn is_uninit_value_valid_for_ty_fallback<'tcx>(cx: &LateContext<'tcx>, ty: Ty<'tcx>) -> bool {
     match *ty.kind() {
         // The array length may be polymorphic, let's try the inner type.
-        ty::Array(component, _) => is_uninit_value_valid_for_ty(cx, component),
+        ty::Array(component, len) => {
+            // Zero-length arrays are always valid
+            if len.try_to_target_usize(cx.tcx) == Some(0) {
+                return true;
+            }
+            is_uninit_value_valid_for_ty(cx, component)
+        },
         // Peek through tuples and try their fallbacks.
         ty::Tuple(types) => types.iter().all(|ty| is_uninit_value_valid_for_ty(cx, ty)),
         // Unions are always fine right now.
@@ -527,8 +525,15 @@ fn is_uninit_value_valid_for_ty_fallback<'tcx>(cx: &LateContext<'tcx>, ty: Ty<'t
         ty::Adt(adt, args) if adt.is_struct() => adt
             .all_fields()
             .all(|field| is_uninit_value_valid_for_ty(cx, field.ty(cx.tcx, args).skip_norm_wip())),
-        // For the rest, conservatively assume that they cannot be uninit.
-        _ => false,
+        // Enums have a discriminant that cannot be uninitialized, regardless of their variants.
+        ty::Adt(adt, _) if adt.is_enum() => false,
+        // For all other types, delegate to rustc.
+        _ => {
+            let typing_env = cx.typing_env().with_post_analysis_normalized(cx.tcx);
+            cx.tcx
+                .check_validity_requirement((ValidityRequirement::Uninit, typing_env.as_query_input(ty)))
+                .unwrap_or(false)
+        },
     }
 }
 
