@@ -280,4 +280,33 @@ mod issue_11715 {
         let mut v: Vec<OneVariantMaybeUninit> = Vec::with_capacity(1);
         unsafe { v.set_len(1) };
     }
+
+    fn generic_vec_lints<T>() {
+        let mut v: Vec<T> = Vec::with_capacity(1);
+        //~^ uninit_vec
+        unsafe { v.set_len(1) };
+    }
+
+    fn generic_vec_maybeuninit<T>() {
+        let mut v: Vec<MaybeUninit<T>> = Vec::with_capacity(1);
+        unsafe { v.set_len(1) };
+    }
+
+    trait Assoc {
+        type Item;
+    }
+    fn projection_vec_lints<T: Assoc>() {
+        let mut v: Vec<<T as Assoc>::Item> = Vec::with_capacity(1);
+        //~^ uninit_vec
+        unsafe { v.set_len(1) };
+    }
+
+    struct Concrete;
+    impl Assoc for Concrete {
+        type Item = MaybeUninit<u8>;
+    }
+    fn normalized_projection_vec_ok() {
+        let mut v: Vec<<Concrete as Assoc>::Item> = Vec::with_capacity(1);
+        unsafe { v.set_len(1) };
+    }
 }
