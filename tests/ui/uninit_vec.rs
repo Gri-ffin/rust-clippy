@@ -248,4 +248,19 @@ mod issue_11715 {
         //~^ uninit_vec
         unsafe { v.set_len(1) };
     }
+
+    enum Uninhabited {}
+    fn uninhabited_enum() {
+        let mut v: Vec<Uninhabited> = Vec::with_capacity(1);
+        //~^ uninit_vec
+        unsafe { v.set_len(1) };
+    }
+
+    enum SingleVariant {
+        OnlyOne,
+    }
+    fn single_variant_enum() {
+        let mut v: Vec<SingleVariant> = Vec::with_capacity(1);
+        unsafe { v.set_len(1) };
+    }
 }

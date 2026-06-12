@@ -525,8 +525,6 @@ pub fn is_uninit_value_valid_for_ty<'tcx>(cx: &LateContext<'tcx>, ty: Ty<'tcx>) 
         ty::Adt(adt, args) if adt.is_struct() => adt
             .all_fields()
             .all(|field| is_uninit_value_valid_for_ty(cx, field.ty(cx.tcx, args).skip_norm_wip())),
-        // Enums have a discriminant that cannot be uninitialized, regardless of their variants.
-        ty::Adt(adt, _) if adt.is_enum() => false,
         // For all other types, delegate to rustc.
         _ => {
             let typing_env = cx.typing_env().with_post_analysis_normalized(cx.tcx);
