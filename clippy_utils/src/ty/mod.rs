@@ -543,6 +543,8 @@ pub fn is_uninit_value_valid_for_ty<'tcx>(cx: &LateContext<'tcx>, ty: Ty<'tcx>) 
         // Multi variant enums have a discriminant that cannot be uninitialized.
         // Uninhabited enums have no valid bit pattern.
         ty::Adt(adt, _) if adt.is_enum() => false,
+        // Conservatively treat Generic Params and Aliases as not allowing uninit values.
+        ty::Param(_) | ty::Alias(..) => false,
         // For all other types, delegate to rustc.
         _ => cx
             .tcx
