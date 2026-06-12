@@ -263,4 +263,21 @@ mod issue_11715 {
         let mut v: Vec<SingleVariant> = Vec::with_capacity(1);
         unsafe { v.set_len(1) };
     }
+
+    enum OneVariantU8 {
+        ThisOne([u8; 4294967296]),
+    }
+    fn one_variant_u8() {
+        let mut v: Vec<OneVariantU8> = Vec::with_capacity(1);
+        //~^ uninit_vec
+        unsafe { v.set_len(1) };
+    }
+
+    enum OneVariantMaybeUninit {
+        ThisOne([MaybeUninit<u8>; 4294967296]),
+    }
+    fn one_variant_maybe_uninit() {
+        let mut v: Vec<OneVariantMaybeUninit> = Vec::with_capacity(1);
+        unsafe { v.set_len(1) };
+    }
 }

@@ -521,10 +521,13 @@ pub fn is_uninit_value_valid_for_ty<'tcx>(cx: &LateContext<'tcx>, ty: Ty<'tcx>) 
         ty::Adt(adt, _) if adt.is_union() => true,
         // Types (e.g. `UnsafeCell<MaybeUninit<T>>`) that recursively contain only types that can be uninit
         // can themselves be uninit too.
-        // This purposefully ignores enums as they may have a discriminant that can't be uninit.
-        ty::Adt(adt, args) if adt.is_struct() => adt
+        // This also applies for single variant enums, whose validity is determined by their fields.
+        ty::Adt(adt, args) if adt.is_struct() || adt.variants().len() == 1 => adt
             .all_fields()
             .all(|field| is_uninit_value_valid_for_ty(cx, field.ty(cx.tcx, args).skip_norm_wip())),
+        // Multi variant enums have a discriminant that cannot be uninitialized.
+        // Uninhabited enums have no valid bit pattern.
+        ty::Adt(adt, _) if adt.is_enum() => false,
         // For all other types, delegate to rustc.
         _ => {
             let typing_env = cx.typing_env().with_post_analysis_normalized(cx.tcx);

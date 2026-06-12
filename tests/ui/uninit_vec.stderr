@@ -203,5 +203,16 @@ LL |         unsafe { v.set_len(1) };
    |
    = help: initialize the buffer or wrap the content in `MaybeUninit`
 
-error: aborting due to 19 previous errors
+error: calling `set_len()` immediately after reserving a buffer creates uninitialized values
+  --> tests/ui/uninit_vec.rs:271:9
+   |
+LL |         let mut v: Vec<OneVariantU8> = Vec::with_capacity(1);
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+LL |
+LL |         unsafe { v.set_len(1) };
+   |                  ^^^^^^^^^^^^
+   |
+   = help: initialize the buffer or wrap the content in `MaybeUninit`
+
+error: aborting due to 20 previous errors
 
