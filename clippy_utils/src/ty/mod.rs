@@ -3,7 +3,7 @@
 #![allow(clippy::module_name_repetitions)]
 
 use core::ops::ControlFlow;
-use rustc_abi::VariantIdx;
+use rustc_abi::{BackendRepr, FieldsShape, VariantIdx, Variants};
 use rustc_ast::ast::Mutability;
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir as hir;
@@ -17,7 +17,7 @@ use rustc_middle::mir::ConstValue;
 use rustc_middle::mir::interpret::Scalar;
 use rustc_middle::traits::EvaluationResult;
 use rustc_middle::ty::adjustment::{Adjust, Adjustment, DerefAdjustKind};
-use rustc_middle::ty::layout::ValidityRequirement;
+use rustc_middle::ty::layout::{LayoutOf, TyAndLayout, ValidityRequirement};
 use rustc_middle::ty::{
     self, AdtDef, AliasTy, AssocItem, AssocTag, Binder, BoundRegion, BoundVarIndexKind, FnSig, GenericArg,
     GenericArgKind, GenericArgsRef, IntTy, Region, RegionKind, TraitRef, Ty, TyCtxt, TypeSuperVisitable, TypeVisitable,
@@ -505,6 +505,58 @@ pub fn same_type_modulo_regions<'tcx>(a: Ty<'tcx>, b: Ty<'tcx>) -> bool {
 
 /// Checks if a given type looks safe to be uninitialized.
 pub fn is_uninit_value_valid_for_ty<'tcx>(cx: &LateContext<'tcx>, ty: Ty<'tcx>) -> bool {
+    let Ok(layout) = cx.layout_of(ty) else {
+        // Fall back to type-based check for polymorphic types.
+        return is_uninit_value_valid_for_ty_fallback(cx, ty);
+    };
+    is_uninit_value_valid_for_layout(cx, layout)
+}
+
+fn is_uninit_value_valid_for_layout<'tcx>(cx: &LateContext<'tcx>, layout: TyAndLayout<'tcx>) -> bool {
+    // Uninhabited types (e.g `!`) are not valid.
+    if layout.layout.uninhabited {
+        return false;
+    }
+    // Scalars (like pointers, references, and NonZero types) often cannot be uninitialized.
+    let scalar_ok = match layout.layout.backend_repr {
+        BackendRepr::Scalar(s) => s.is_uninit_valid(),
+        BackendRepr::ScalarPair(a, b) => a.is_uninit_valid() && b.is_uninit_valid(),
+        BackendRepr::SimdVector { element, count } => count == 0 || element.is_uninit_valid(),
+        BackendRepr::SimdScalableVector { element, .. } => element.is_uninit_valid(),
+        // Here validity is determined by the structural fields instead.
+        BackendRepr::Memory { .. } => true,
+    };
+    if !scalar_ok {
+        return false;
+    }
+    match &layout.layout.variants {
+        Variants::Single { .. } => match &layout.layout.fields {
+            FieldsShape::Primitive => true,
+            // Arrays are valid if empty, or if their elements are valid.
+            FieldsShape::Array { count, .. } => {
+                if *count == 0 {
+                    true
+                } else {
+                    is_uninit_value_valid_for_layout(cx, layout.field(cx, 0))
+                }
+            },
+            // Structs like types are valid only if all fields are valid.
+            FieldsShape::Arbitrary { offsets, .. } => {
+                (0..offsets.len()).all(|i| is_uninit_value_valid_for_layout(cx, layout.field(cx, i)))
+            },
+            // Unions are valid if at least one field is valid.
+            FieldsShape::Union(count) => {
+                (0..count.get()).any(|i| is_uninit_value_valid_for_layout(cx, layout.field(cx, i)))
+            },
+        },
+        // Types with no valid variants must be uninhabited
+        // Enum like with multiple inhabited variants have a discriminant, they cannot be uninitialized.
+        Variants::Empty | Variants::Multiple { .. } => false,
+    }
+}
+
+/// Fallback for polymorphic types where `layout_of` fails
+fn is_uninit_value_valid_for_ty_fallback<'tcx>(cx: &LateContext<'tcx>, ty: Ty<'tcx>) -> bool {
     let typing_env = cx.typing_env().with_post_analysis_normalized(cx.tcx);
 
     match *ty.kind() {
