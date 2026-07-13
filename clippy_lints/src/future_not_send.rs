@@ -87,57 +87,61 @@ impl<'tcx> LateLintPass<'tcx> for FutureNotSend {
         {
             let span = decl.output.span();
             let infcx = cx.tcx.infer_ctxt().build(cx.typing_mode());
-            let ocx = ObligationCtxt::new_with_diagnostics(&infcx);
-            let cause = traits::ObligationCause::misc(span, fn_def_id);
-            ocx.register_bound(cause, cx.param_env, ret_ty, send_trait);
-            let send_errors = ocx.evaluate_obligations_error_on_ambiguity();
 
-            // Allow errors that try to prove `Send` for types that "mention" a generic parameter at the "top
-            // level".
-            // For example, allow errors that `T: Send` can't be proven, but reject `Rc<T>: Send` errors,
-            // which is always unconditionally `!Send` for any possible type `T`.
-            //
-            // We also allow associated type projections if the self type is either itself a projection or a
-            // type parameter.
-            // This is to prevent emitting warnings for e.g. holding a `<Fut as Future>::Output` across await
-            // points, where `Fut` is a type parameter.
+            infcx.probe(|_| {
+                let ocx = ObligationCtxt::new_with_diagnostics(&infcx);
+                let cause = traits::ObligationCause::misc(span, fn_def_id);
+                ocx.register_bound(cause, cx.param_env, ret_ty, send_trait);
 
-            let is_send = send_errors.iter().all(|err| {
-                err.obligation
-                    .predicate
-                    .as_trait_clause()
-                    .map(Binder::skip_binder)
-                    .is_some_and(|pred| {
-                        pred.def_id() == send_trait
-                            && pred.self_ty().has_param()
-                            && TyParamAtTopLevelVisitor.visit_ty(pred.self_ty()) == ControlFlow::Break(true)
-                    })
-            });
+                let errors = ocx.evaluate_obligations_error_on_ambiguity();
 
-            if !is_send {
-                span_lint_and_then(
-                    cx,
-                    FUTURE_NOT_SEND,
-                    span,
-                    "future cannot be sent between threads safely",
-                    |db| {
-                        for FulfillmentError { obligation, .. } in send_errors {
-                            infcx
-                                .err_ctxt()
-                                .maybe_note_obligation_cause_for_async_await(db, &obligation);
-                            if let PredicateKind::Clause(ClauseKind::Trait(trait_pred)) =
-                                obligation.predicate.kind().skip_binder()
-                            {
-                                db.note(format!(
-                                    "`{}` doesn't implement `{}`",
-                                    trait_pred.self_ty(),
-                                    trait_pred.trait_ref.print_only_trait_path(),
-                                ));
+                // Allow errors that try to prove `Send` for types that "mention" a generic parameter at the "top
+                // level".
+                // For example, allow errors that `T: Send` can't be proven, but reject `Rc<T>: Send` errors,
+                // which is always unconditionally `!Send` for any possible type `T`.
+                //
+                // We also allow associated type projections if the self type is either itself a projection or a
+                // type parameter.
+                // This is to prevent emitting warnings for e.g. holding a `<Fut as Future>::Output` across await
+                // points, where `Fut` is a type parameter.
+
+                let is_send = errors.iter().all(|err| {
+                    err.obligation
+                        .predicate
+                        .as_trait_clause()
+                        .map(Binder::skip_binder)
+                        .is_some_and(|pred| {
+                            pred.def_id() == send_trait
+                                && pred.self_ty().has_param()
+                                && TyParamAtTopLevelVisitor.visit_ty(pred.self_ty()) == ControlFlow::Break(true)
+                        })
+                });
+
+                if !is_send {
+                    span_lint_and_then(
+                        cx,
+                        FUTURE_NOT_SEND,
+                        span,
+                        "future cannot be sent between threads safely",
+                        |db| {
+                            for FulfillmentError { obligation, .. } in &errors {
+                                infcx
+                                    .err_ctxt()
+                                    .maybe_note_obligation_cause_for_async_await(db, obligation);
+                                if let PredicateKind::Clause(ClauseKind::Trait(trait_pred)) =
+                                    obligation.predicate.kind().skip_binder()
+                                {
+                                    db.note(format!(
+                                        "`{}` doesn't implement `{}`",
+                                        trait_pred.self_ty(),
+                                        trait_pred.trait_ref.print_only_trait_path(),
+                                    ));
+                                }
                             }
-                        }
-                    },
-                );
-            }
+                        },
+                    );
+                }
+            });
         }
     }
 }
