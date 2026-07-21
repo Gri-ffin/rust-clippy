@@ -317,8 +317,8 @@ impl<'tcx> LateLintPass<'tcx> for Dereferencing<'tcx> {
                     },
                     RefOp::Method { mutbl, is_ufcs }
                         if !is_lint_allowed(cx, EXPLICIT_DEREF_METHODS, expr.hir_id)
-                            // Allow explicit deref in method chains. e.g. `foo.deref().bar()`
-                            && (is_ufcs || !is_in_method_chain(cx, expr)) =>
+                        // Allow explicit deref in method chains. e.g. `foo.deref().bar()`
+                        && (is_ufcs || !is_in_method_chain(cx, expr)) =>
                     {
                         let ty_changed_count = usize::from(!deref_method_same_type(expr_ty, typeck.expr_ty(sub_expr)));
                         self.state = Some((
@@ -403,37 +403,37 @@ impl<'tcx> LateLintPass<'tcx> for Dereferencing<'tcx> {
                                         // If this trait impl is implemented on `&T`, then auto-borrowing won't work
                                         (impl_ty.is_ref()
                                         && implements_trait(
-                                            cx,
-                                            impl_ty,
-                                            trait_id,
-                                            &args[..cx.tcx.generics_of(trait_id).own_params.len() - 1],
-                                        ))
+                                        cx,
+                                        impl_ty,
+                                        trait_id,
+                                        &args[..cx.tcx.generics_of(trait_id).own_params.len() - 1],
+                                    ))
                                         // If there's an inherent method, or a method from another trait,
                                         // with the same name that's also implemented on this same type,
                                         // then removing the borrow might cause that method to be chosen
                                         // instead of the current one.
                                         || get_adt_inherent_method(cx, impl_ty, method_name).is_some()
                                         || cx.tcx.in_scope_traits(hir_id).is_some_and(|traits| {
-                                            traits
-                                                .iter()
-                                                .filter(|trait_| {
-                                                    cx.tcx
-                                                        .non_blanket_impls_for_ty(trait_.def_id, impl_ty)
-                                                        .next()
-                                                        .is_some()
-                                                        || !cx
-                                                            .tcx
-                                                            .trait_impls_of(trait_.def_id)
-                                                            .blanket_impls()
-                                                            .is_empty()
-                                                })
-                                                .any(|trait_| {
-                                                    cx.tcx
-                                                        .associated_items(trait_.def_id)
-                                                        .filter_by_name_unhygienic(method_name)
-                                                        .any(|item| item.tag() == AssocTag::Fn && item.def_id != fn_id)
-                                                })
-                                        })
+                                        traits
+                                            .iter()
+                                            .filter(|trait_| {
+                                                cx.tcx
+                                                    .non_blanket_impls_for_ty(trait_.def_id, impl_ty)
+                                                    .next()
+                                                    .is_some()
+                                                    || !cx
+                                                    .tcx
+                                                    .trait_impls_of(trait_.def_id)
+                                                    .blanket_impls()
+                                                    .is_empty()
+                                            })
+                                            .any(|trait_| {
+                                                cx.tcx
+                                                    .associated_items(trait_.def_id)
+                                                    .filter_by_name_unhygienic(method_name)
+                                                    .any(|item| item.tag() == AssocTag::Fn && item.def_id != fn_id)
+                                            })
+                                    })
                                     )
                                 {
                                     false
@@ -1025,6 +1025,43 @@ fn ty_contains_field(ty: Ty<'_>, name: Symbol) -> bool {
     }
 }
 
+/// Returns `true` if the expression is in tail position of a branch whose pattern bindings do not
+/// live past that branch. Replacing it with `&expr` would create a reference to a local that
+/// doesn't live long enough.
+fn is_in_pattern_branch_tail(tcx: TyCtxt<'_>, mut id: HirId) -> bool {
+    loop {
+        match tcx.parent_hir_node(id) {
+            Node::Arm(arm) => return arm.body.hir_id == id,
+            Node::Block(block) if block.expr.is_some_and(|e| e.hir_id == id) => {
+                id = block.hir_id;
+            },
+            Node::Expr(expr) => match expr.kind {
+                ExprKind::Block(..) | ExprKind::DropTemps(_) => {
+                    id = expr.hir_id;
+                },
+                ExprKind::If(cond, then_expr, else_expr) => {
+                    if then_expr.hir_id == id {
+                        if matches!(cond.kind, ExprKind::Let(_)) {
+                            return true;
+                        }
+                        // Bubble up for normal if branch
+                        id = expr.hir_id;
+                    } else if else_expr.is_some_and(|e| e.hir_id == id) {
+                        // Bubble up for normal else branch
+                        id = expr.hir_id;
+                    } else {
+                        return false;
+                    }
+                },
+
+                _ => return false,
+            },
+
+            _ => return false,
+        }
+    }
+}
+
 impl<'tcx> Dereferencing<'tcx> {
     fn in_deref_impl(&self) -> bool {
         self.outermost_deref_impl.is_some()
@@ -1076,10 +1113,17 @@ impl<'tcx> Dereferencing<'tcx> {
                     }
                 },
                 _ if !e.span.from_expansion() => {
-                    // Double reference might be needed at this point.
-                    pat.always_deref = false;
-                    let snip = snippet_with_applicability(cx, e.span, "..", &mut pat.app);
-                    pat.replacements.push((e.span, format!("&{snip}")));
+                    // If the expression is in the tail position of a match arm, suggesting
+                    // `&x` would create a reference to a local binding that doesn't live
+                    // long enough.
+                    if is_in_pattern_branch_tail(cx.tcx, e.hir_id) {
+                        *outer_pat = None;
+                    } else {
+                        // Double reference might be needed at this point.
+                        pat.always_deref = false;
+                        let snip = snippet_with_applicability(cx, e.span, "..", &mut pat.app);
+                        pat.replacements.push((e.span, format!("&{snip}")));
+                    }
                 },
                 // Edge case for macros. The span of the identifier will usually match the context of the
                 // binding, but not if the identifier was created in a macro. e.g. `concat_idents` and proc

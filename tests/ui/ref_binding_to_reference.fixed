@@ -1,6 +1,6 @@
 #![warn(clippy::ref_binding_to_reference)]
 #![expect(clippy::explicit_auto_deref)]
-#![allow(clippy::needless_borrowed_reference)]
+#![allow(clippy::needless_borrowed_reference, clippy::collapsible_match)]
 
 fn f1(_: &str) {}
 macro_rules! m2 {
@@ -23,21 +23,11 @@ fn main() {
         None => return,
     };
 
-    // Err, reference to a &String
-    #[expect(
-        clippy::ref_binding_to_reference,
-        reason = "The suggestion doesn't compile, see https://github.com/rust-lang/rust-clippy/issues/17370"
-    )]
     let _: &&String = match Some(&x) {
         Some(ref x) => x,
         None => return,
     };
 
-    // Err, reference to a &String
-    #[expect(
-        clippy::ref_binding_to_reference,
-        reason = "The suggestion doesn't compile, see https://github.com/rust-lang/rust-clippy/issues/17370"
-    )]
     let _: &&String = match Some(&x) {
         Some(ref x) => {
             f1(x);
@@ -89,11 +79,99 @@ impl T1 for S {
     }
 }
 
-fn check_expect_suppression() {
-    let x = String::new();
-    #[expect(clippy::ref_binding_to_reference)]
-    let _: &&String = match Some(&x) {
-        Some(ref x) => x,
-        None => return,
-    };
+mod issue17370 {
+    fn f1(_: &str) {}
+
+    fn match_ref_some() {
+        let x = String::new();
+        let _: &&String = match Some(&x) {
+            Some(ref x) => x,
+            None => return,
+        };
+    }
+
+    fn match_ref(x: String) {
+        let _: &&String = match &x {
+            ref x => x,
+            _ => return,
+        };
+    }
+
+    fn if_let(x: String) {
+        let opt = Some(&x);
+
+        let _: &&String = if let Some(ref x) = opt {
+            x
+        } else {
+            return;
+        };
+    }
+
+    fn if_let_block_tail(x: String) {
+        let opt = Some(&x);
+
+        let _: &&String = if let Some(ref x) = opt {
+            f1(x);
+            f1(*x);
+            x
+        } else {
+            return;
+        };
+    }
+
+    fn normal_if_tail(x: String) {
+        let _: &&String = match Some(&x) {
+            Some(ref x) => {
+                if true {
+                    x
+                } else {
+                    return;
+                }
+            },
+            None => return,
+        };
+    }
+
+    fn normal_if_block_tail(x: String) {
+        let _: &&String = match Some(&x) {
+            Some(ref x) => {
+                if true {
+                    f1(x);
+                    f1(*x);
+                    x
+                } else {
+                    return;
+                }
+            },
+            None => return,
+        };
+    }
+
+    fn normal_else_tail(x: String) {
+        let _: &&String = match Some(&x) {
+            Some(ref x) => {
+                if true {
+                    return;
+                } else {
+                    x
+                }
+            },
+            None => return,
+        };
+    }
+
+    fn normal_else_block_tail(x: String) {
+        let _: &&String = match Some(&x) {
+            Some(ref x) => {
+                if true {
+                    return;
+                } else {
+                    f1(x);
+                    f1(*x);
+                    x
+                }
+            },
+            None => return,
+        };
+    }
 }
